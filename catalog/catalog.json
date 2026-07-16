@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "1.0.0",
+  "skills": [
+    { "id": "nodejs", "stacks": ["nodejs"], "path": "skills/nodejs/SKILL.md", "digest": "e25a5de542f705623fc3db32a0b24b9f61d881eac79a698add339b29b9b7c996" },
+    { "id": "react", "stacks": ["react"], "path": "skills/react/SKILL.md", "digest": "60671dfd6edcf53ee191aa04b4001d0ffa8c0241daf1431154bb23413f6212b6" },
+    { "id": "sap-ui5", "stacks": ["sap-ui5"], "path": "skills/sap-ui5/SKILL.md", "digest": "2b9f04fd2b2d114edcbabeaa9f88ca48694c45225c4090b0793ad54c52a4cd6d" },
+    { "id": "spring-boot", "stacks": ["spring-boot"], "path": "skills/spring-boot/SKILL.md", "digest": "353fa6efb35090da2ae340dd548a445546e9644af19e7f1a3fc1b353423981c4" }
+  ]
+}
