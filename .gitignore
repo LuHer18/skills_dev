@@ -1,3 +1,4 @@
 .atl/
 dist/
+*.tgz
 node_modules/
