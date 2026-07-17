@@ -23,6 +23,20 @@ test("catalog loads packaged skills offline in ID order independent of network",
   assert.equal(loaded.assets.get("react")?.toString().includes("React"), true);
 });
 
+test("catalog canonicalizes skills and assets independently of manifest entry order", async () => {
+  const root = await fixture({ schemaVersion: 1, catalogVersion: "1.0.0", skills: [
+    { id: "zebra", stacks: ["nodejs"], path: "skills/zebra/SKILL.md", digest },
+    { id: "alpha", stacks: ["react"], path: "skills/alpha/SKILL.md", digest }
+  ] });
+  try {
+    await mkdir(join(root, "skills", "zebra"), { recursive: true }); await writeFile(join(root, "skills", "zebra", "SKILL.md"), "x");
+    await mkdir(join(root, "skills", "alpha"), { recursive: true }); await writeFile(join(root, "skills", "alpha", "SKILL.md"), "x");
+    const loaded = await loadCatalog(root);
+    assert.deepEqual(loaded.catalog.skills.map((skill) => skill.id), ["alpha", "zebra"]);
+    assert.deepEqual([...loaded.assets.keys()], ["alpha", "zebra"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("catalog rejects malformed metadata, unsafe fields, and duplicates", () => {
   assert.throws(() => parseCatalog({ ...valid(), extra: true }), /Invalid catalog/);
   assert.throws(() => parseCatalog({ ...valid(), schemaVersion: 2 }), /Invalid catalog/);

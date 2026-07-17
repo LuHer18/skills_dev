@@ -29,3 +29,25 @@ test("detectors ignore nested evidence and succeed with no root evidence", () =>
   await mkdir(join(directory, "nested")); await writeFile(join(directory, "nested", "package.json"), JSON.stringify({ dependencies: { react: "*" } }));
   assert.deepEqual(await detectStacks(directory), { stacks: [], warnings: [] });
 }));
+
+test("Spring Boot recognizers ignore Maven XML and Gradle comments", () => withRoot(async (directory) => {
+  await Promise.all([
+    writeFile(join(directory, "pom.xml"), "<!-- <artifactId>spring-boot-starter-parent</artifactId> -->"),
+    writeFile(join(directory, "build.gradle"), "// id 'org.springframework.boot'\n/* org.springframework.boot */")
+  ]);
+  assert.deepEqual((await detectStacks(directory)).stacks, []);
+}));
+
+test("Spring Boot Gradle comment handling preserves quoted delimiters without joining strings", () => withRoot(async (directory) => {
+  await writeFile(join(directory, "build.gradle"), "def opening = '/*'\nid 'org.springframework.boot'\ndef closing = '*/'\ndef line = '//'");
+  assert.deepEqual((await detectStacks(directory)).stacks, ["spring-boot"]);
+  await writeFile(join(directory, "build.gradle"), "def delimiters = '// /* */'\ndef split = 'org.springframework.' + 'boot'");
+  assert.deepEqual((await detectStacks(directory)).stacks, []);
+}));
+
+test("Spring Boot ignores plugin-shaped Gradle multiline strings but detects adjacent declarations", () => withRoot(async (directory) => {
+  await writeFile(join(directory, "build.gradle"), "def single = '''\nid 'org.springframework.boot'\n'''\ndef double = \"\"\"\nid 'org.springframework.boot'\n\"\"\"");
+  assert.deepEqual((await detectStacks(directory)).stacks, []);
+  await writeFile(join(directory, "build.gradle.kts"), "val sample = \"\"\"\nid(\"org.springframework.boot\")\n\"\"\"\nid(\"org.springframework.boot\")");
+  assert.deepEqual((await detectStacks(directory)).stacks, ["spring-boot"]);
+}));

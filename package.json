@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": { "project-skill-installer": "dist/src/cli.js" },
   "engines": { "node": ">=22" },
   "scripts": {
     "build": "tsc",
