@@ -3,10 +3,11 @@ import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { loadCatalog } from "../src/catalog/loader.js";
 import { parseCatalog } from "../src/catalog/schema.js";
 
-const packagedCatalog = new URL("../../catalog/", import.meta.url).pathname;
+const packagedCatalog = fileURLToPath(new URL("../../catalog/", import.meta.url));
 const digest = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
 async function fixture(manifest: unknown, asset = "x") {
   const root = await mkdtemp(join(tmpdir(), "catalog-"));

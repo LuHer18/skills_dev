@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { install, type InstallFs } from "../src/install/transaction.js";
 import { acquireLock } from "../src/install/lock.js";
@@ -93,7 +93,7 @@ test("rollback recovery summary names every affected target, backup, and stage i
   let renames = 0;
   await assert.rejects(install(base, [action("beta", "new", "replace"), action("alpha", "new")], {
     rename: async (from, to) => { if (++renames === 3 || renames === 4) throw new Error("rename fault"); await rename(from, to); },
-    rm: async (path, options) => { if (path.endsWith("/alpha")) throw new Error("remove fault"); await rm(path, options); },
+    rm: async (path, options) => { if (basename(path) === "alpha") throw new Error("remove fault"); await rm(path, options); },
   }), (error: Error) => {
     const message = error.message; const alpha = join(base, ".agents/skills/alpha"); const beta = join(base, ".agents/skills/beta");
     assert.ok(message.includes(`${alpha} (backup ${join(base, ".agents/skills/.alpha.backup-")}`));
