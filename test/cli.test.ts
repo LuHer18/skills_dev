@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseArgs, runApp, type AppDependencies } from "../src/app.js";
 import { resolveCollisions } from "../src/prompt.js";
 import type { LoadedCatalog } from "../src/catalog/loader.js";
@@ -31,6 +34,21 @@ test("app renders stable dry-run reports without invoking mutation", async () =>
   assert.deepEqual(output, ["Outcome: dry-run\nSkills:\n- install react\nWarnings:\n- warn\n"]);
   assert.equal(await runApp(["--bad"], dependencies), 2);
   assert.match(output[1], /Unknown argument/);
+});
+
+test("app performs a real temp-root install while dry-run remains zero-mutation", async (t) => {
+  const base = await mkdtemp(join(tmpdir(), "cli-install-")); t.after(() => rm(base, { recursive: true, force: true })); const output: string[] = [];
+  const dependencies: AppDependencies = { cwd: () => base, resolve: (value) => value, loadCatalog: async () => loaded, detectStacks: async () => ({ stacks: ["react"], warnings: [] }), write: (value) => output.push(value), prompt: { isTTY: false, confirm: async () => false } };
+  assert.equal(await runApp([], dependencies), 0);
+  assert.equal(await readFile(join(base, ".agents/skills/react/SKILL.md"), "utf8"), "x");
+  const dry = await mkdtemp(join(tmpdir(), "cli-dry-")); t.after(() => rm(dry, { recursive: true, force: true }));
+  assert.equal(await runApp(["--dry-run"], { ...dependencies, cwd: () => dry }), 0);
+  await assert.rejects(readFile(join(dry, ".agents/skills/react/SKILL.md")));
+  assert.match(output[0], /Outcome: success/);
+  const collision = await mkdtemp(join(tmpdir(), "cli-collision-")); t.after(() => rm(collision, { recursive: true, force: true }));
+  await (await import("node:fs/promises")).mkdir(join(collision, ".agents/skills/react"), { recursive: true }); await (await import("node:fs/promises")).writeFile(join(collision, ".agents/skills/react/SKILL.md"), "old");
+  assert.equal(await runApp([], { ...dependencies, cwd: () => collision }), 0); assert.equal(await readFile(join(collision, ".agents/skills/react/SKILL.md"), "utf8"), "old");
+  assert.equal(await runApp(["--force"], { ...dependencies, cwd: () => collision }), 0); assert.equal(await readFile(join(collision, ".agents/skills/react/SKILL.md"), "utf8"), "x");
 });
 
 test("collision decisions are per-skill in TTY and skipped unless force without TTY", async () => {
