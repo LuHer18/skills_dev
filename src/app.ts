@@ -1,9 +1,12 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { loadCatalog, type LoadedCatalog } from "./catalog/loader.js";
 import { detectStacks, type Detection } from "./detect/index.js";
 import { createPlan } from "./plan.js";
 import { renderReport } from "./report.js";
+import { discover, install } from "./install/transaction.js";
+import { resolveCollisions, type Prompt } from "./prompt.js";
 
 export interface CliOptions { readonly cwd?: string; readonly dryRun: boolean; readonly force: boolean; readonly help?: boolean; readonly version?: boolean }
 export interface AppDependencies {
@@ -12,11 +15,13 @@ export interface AppDependencies {
   readonly loadCatalog: () => Promise<LoadedCatalog>;
   readonly detectStacks: (root: string) => Promise<Detection>;
   readonly write: (text: string) => void;
+  readonly prompt?: Prompt;
 }
 
 const help = "Usage: project-skill-installer [--cwd <path>] [--dry-run] [--force]\n";
 const catalogRoot = fileURLToPath(new URL("../../catalog/", import.meta.url));
 const optionTokens = new Set(["--cwd", "--dry-run", "--force", "--help", "--version", "-h", "-V"]);
+const terminalPrompt: Prompt = { isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY), confirm: async (collision) => { const line = createInterface({ input: process.stdin, output: process.stdout }); try { return (await line.question(`Replace ${collision.target} (${collision.oldDigest} -> ${collision.newDigest})? [y/N] `)).trim().toLowerCase() === "y"; } finally { line.close(); } } };
 
 export function parseArgs(argv: readonly string[]): CliOptions {
   const options: { cwd?: string; dryRun: boolean; force: boolean; help?: boolean; version?: boolean } = { dryRun: false, force: false };
@@ -34,7 +39,7 @@ export function parseArgs(argv: readonly string[]): CliOptions {
 }
 
 export async function runApp(argv: readonly string[], injected?: AppDependencies): Promise<number> {
-  const dependencies = injected ?? { cwd: process.cwd, resolve, loadCatalog: () => loadCatalog(catalogRoot), detectStacks, write: (text: string) => process.stdout.write(text) };
+  const dependencies = injected ?? { cwd: process.cwd, resolve, loadCatalog: () => loadCatalog(catalogRoot), detectStacks, write: (text: string) => process.stdout.write(text), prompt: terminalPrompt };
   try {
     const options = parseArgs(argv);
     if (options.help) { dependencies.write(help); return 0; }
@@ -42,7 +47,11 @@ export async function runApp(argv: readonly string[], injected?: AppDependencies
     const root = dependencies.resolve(options.cwd ?? dependencies.cwd());
     const [catalog, detection] = await Promise.all([dependencies.loadCatalog(), dependencies.detectStacks(root)]);
     const plan = createPlan(detection.stacks, catalog.catalog);
-    dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "install" as const })), detection.warnings, options.dryRun ? "dry-run" : "planned"));
+    if (options.dryRun) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "install" as const })), detection.warnings, "dry-run")); return 0; }
+    const collisions = await discover(root, plan.actions);
+    const decisions = await resolveCollisions(plan.actions, collisions, dependencies.prompt ?? { isTTY: false, confirm: async () => false }, options.force);
+    let result; try { result = await install(root, plan.actions.map((action, index) => ({ ...action, bytes: catalog.assets.get(action.id)!, decision: decisions[index], expectedDigest: collisions.get(action.id)?.oldDigest }))); } catch (error) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "fail" as const })), detection.warnings, "failure")); throw error; }
+    dependencies.write(renderReport(result.actions, detection.warnings, result.outcome));
     return 0;
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Operational failure";
