@@ -31,5 +31,5 @@ export function parseCatalog(value: unknown): Catalog {
     ids.add(skill.id); paths.add(skill.path);
     return { id: skill.id, stacks: [...skill.stacks], path: skill.path, digest: skill.digest };
   });
-  return { schemaVersion: 1, catalogVersion: manifest.catalogVersion, skills };
+  return { schemaVersion: 1, catalogVersion: manifest.catalogVersion, skills: skills.sort((left, right) => left.id.localeCompare(right.id)) };
 }
