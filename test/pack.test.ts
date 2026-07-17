@@ -10,7 +10,7 @@ import test from "node:test";
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const command = (name: string) => process.platform === "win32" ? `${name}.cmd` : name;
 const run = (file: string, args: string[], cwd = root) => new Promise<{ stdout: string }>((resolve, reject) => {
-  execFile(file, args, { cwd, windowsHide: true }, (error, stdout, stderr) => error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve({ stdout }));
+  execFile(file, args, { cwd, shell: process.platform === "win32", windowsHide: true }, (error, stdout, stderr) => error ? reject(new Error(`${error.message}\n${stderr}`)) : resolve({ stdout }));
 });
 const names = (tarball: Buffer) => {
   const bytes = gunzipSync(tarball); const result: string[] = [];

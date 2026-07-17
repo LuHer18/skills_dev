@@ -34,7 +34,7 @@ const defaults = {
   rm: (path: string, options: { recursive?: boolean; force?: boolean }) => rm(path, options),
   journalCreate: (path: string) => writeFile(path, ""),
   journalUpdate: (path: string, line: string) => appendFile(path, line),
-  journalFlush: async (path: string) => { const handle = await open(path, "r"); await handle.sync(); await handle.close(); },
+  journalFlush: async (path: string) => { const handle = await open(path, "r+"); try { await handle.sync(); } finally { await handle.close(); } },
   nonce: randomUUID,
 };
 
