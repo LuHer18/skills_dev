@@ -4,10 +4,10 @@ import { createPlan } from "../src/plan.js";
 import type { Catalog } from "../src/catalog/schema.js";
 
 const catalog: Catalog = {
-  schemaVersion: 1, catalogVersion: "1.0.0", skills: [
-    { id: "zeta", stacks: ["react"], path: "skills/zeta/SKILL.md", digest: "a".repeat(64) },
-    { id: "alpha", stacks: ["nodejs", "react"], path: "skills/alpha/SKILL.md", digest: "b".repeat(64) },
-    { id: "unused", stacks: ["sap-ui5"], path: "skills/unused/SKILL.md", digest: "c".repeat(64) }
+  schemaVersion: 2, catalogVersion: "1.0.0", skills: [
+    { id: "alpha", stacks: ["nodejs", "react"], files: [{ path: "SKILL.md", digest: "b".repeat(64) }] },
+    { id: "unused", stacks: ["sap-ui5"], files: [{ path: "SKILL.md", digest: "c".repeat(64) }] },
+    { id: "zeta", stacks: ["react"], files: [{ path: "SKILL.md", digest: "a".repeat(64) }] }
   ]
 };
 
