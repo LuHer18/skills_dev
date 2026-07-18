@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { loadCatalog, type LoadedCatalog } from "./catalog/loader.js";
+import { loadCatalog, projectSingleFileAssets, type LoadedCatalog } from "./catalog/loader.js";
 import { detectStacks, type Detection } from "./detect/index.js";
 import { createPlan } from "./plan.js";
 import { renderReport } from "./report.js";
@@ -46,11 +46,11 @@ export async function runApp(argv: readonly string[], injected?: AppDependencies
     if (options.version) { dependencies.write("0.0.0\n"); return 0; }
     const root = dependencies.resolve(options.cwd ?? dependencies.cwd());
     const [catalog, detection] = await Promise.all([dependencies.loadCatalog(), dependencies.detectStacks(root)]);
-    const plan = createPlan(detection.stacks, catalog.catalog);
+    const plan = createPlan(detection.stacks, catalog.catalog); const assets = projectSingleFileAssets(catalog.trees);
     if (options.dryRun) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "install" as const })), detection.warnings, "dry-run")); return 0; }
     const collisions = await discover(root, plan.actions);
     const decisions = await resolveCollisions(plan.actions, collisions, dependencies.prompt ?? { isTTY: false, confirm: async () => false }, options.force);
-    let result; try { result = await install(root, plan.actions.map((action, index) => ({ ...action, bytes: catalog.assets.get(action.id)!, decision: decisions[index], expectedDigest: collisions.get(action.id)?.oldDigest }))); } catch (error) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "fail" as const })), detection.warnings, "failure")); throw error; }
+    let result; try { result = await install(root, plan.actions.map((action, index) => ({ ...action, bytes: assets.get(action.id)!, decision: decisions[index], expectedDigest: collisions.get(action.id)?.oldDigest }))); } catch (error) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "fail" as const })), detection.warnings, "failure")); throw error; }
     dependencies.write(renderReport(result.actions, detection.warnings, result.outcome));
     return 0;
   } catch (error: unknown) {

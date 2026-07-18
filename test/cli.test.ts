@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs, runApp, type AppDependencies } from "../src/app.js";
 import { resolveCollisions } from "../src/prompt.js";
-import type { LoadedCatalog } from "../src/catalog/loader.js";
+import { VerifiedSkillTree, type LoadedCatalog } from "../src/catalog/loader.js";
 
-const loaded: LoadedCatalog = { catalog: { schemaVersion: 1, catalogVersion: "1.0.0", skills: [
-  { id: "react", stacks: ["react"], path: "skills/react/SKILL.md", digest: "a".repeat(64) }
-] }, assets: new Map([["react", Buffer.from("x")]]) };
+const loaded: LoadedCatalog = { catalog: { schemaVersion: 2, catalogVersion: "1.0.0", skills: [
+  { id: "react", stacks: ["react"], files: [{ path: "SKILL.md", digest: "a".repeat(64) }] }
+] }, trees: new Map([["react", new VerifiedSkillTree(new Map([["SKILL.md", Buffer.from("x")]]))]]) };
 
 test("arguments support cwd, help, version, and reject invalid forms with exit 2", async () => {
   assert.deepEqual(parseArgs(["--cwd", "project", "--dry-run", "--force"]), { cwd: "project", dryRun: true, force: true });
