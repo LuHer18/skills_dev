@@ -9,7 +9,7 @@ import { inventoryTree } from "../src/install/paths.js";
 import { install, type InstallAction, type InstallFs } from "../src/install/transaction.js";
 import { acquireLock } from "../src/install/lock.js";
 
-async function root() { return mkdtemp("/tmp/skill-installer-"); }
+async function root() { return mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "skill-installer-")); }
 const tree = (files: Record<string, string>) => new VerifiedSkillTree(new Map(Object.entries(files).map(([path, value]) => [path, Buffer.from(value)])));
 async function writeTree(base: string, id: string, files: Record<string, string>) { for (const [path, value] of Object.entries(files)) { const file = join(base, ".agents", "skills", id, path); await mkdir(join(file, ".."), { recursive: true }); await writeFile(file, value); } }
 async function action(base: string, id: string, files: Record<string, string>, decision: "install" | "replace" | "skip" = "install"): Promise<InstallAction> { const target = join(base, ".agents", "skills", id); const inventory = decision === "replace" ? await inventoryTree(target) : []; return { id, digest: id[0].repeat(64), tree: tree(files), decision, discovery: { id, target, state: decision === "replace" ? "directory" : "absent", inventory } }; }
@@ -29,8 +29,10 @@ test("rejects nested symlinks and non-directory targets before replacement", asy
   await assert.rejects(action(base, "alpha", { "SKILL.md": "new" }, "replace"), /symlink/);
   await mkdir(join(base, ".agents", "skills", "file-target"), { recursive: true }); await rm(join(base, ".agents", "skills", "file-target"), { recursive: true }); await writeFile(join(base, ".agents", "skills", "file-target"), "file");
   await assert.rejects(install(base, [await action(base, "file-target", { "SKILL.md": "new" })]), /Expected directory/);
-  await writeTree(base, "special", { "SKILL.md": "old", "references/a.md": "old" }); const socket = createServer(); const socketPath = join(base, ".agents/skills/special/references/node.sock"); await new Promise<void>((done) => socket.listen(socketPath, done));
-  await assert.rejects(action(base, "special", { "SKILL.md": "new" }, "replace"), /Unsafe destination node/); await new Promise<void>((done) => socket.close(() => done()));
+  if (process.platform !== "win32") {
+    await writeTree(base, "special", { "SKILL.md": "old", "references/a.md": "old" }); const socket = createServer(); const socketPath = join(base, ".agents/skills/special/references/node.sock"); await new Promise<void>((done) => socket.listen(socketPath, done));
+    await assert.rejects(action(base, "special", { "SKILL.md": "new" }, "replace"), /Unsafe destination node/); await new Promise<void>((done) => socket.close(() => done()));
+  }
 });
 
 test("re-inventory rejects static appearance, disappearance, type, path, and byte races", async (t) => {
