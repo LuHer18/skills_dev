@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { acquireLock } from "./lock.js";
 import { safeExisting, safeTree, skillRoot, target } from "./paths.js";
+import type { Discovery, PlannedSkill } from "../plan.js";
 
 export type InstallDecision = "install" | "replace" | "skip";
 export interface InstallAction { readonly id: string; readonly digest: string; readonly bytes: Buffer; readonly decision: InstallDecision; readonly expectedDigest?: string }
@@ -18,14 +19,14 @@ export interface InstallFs {
   readonly journalFlush?: (path: string) => Promise<void>;
   readonly nonce?: () => string;
 }
-export interface Collision { readonly id: string; readonly target: string; readonly oldDigest: string }
 export interface InstallResult { readonly actions: readonly { id: string; status: InstallDecision | "fail" }[]; readonly outcome: "success" | "failure" }
 type Record = { action: InstallAction; target: string; stage: string; backup: string; moved: boolean; committed: boolean };
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 const journalPath = (root: string) => join(skillRoot(root), ".project-skill-installer.journal");
 const assertExpected = async (record: Record) => {
   if (record.action.decision === "install") { if (await exists(record.target)) throw new Error(`Target appeared after discovery: ${record.target}`); return; }
-  try { const actual = hash(await readFile(join(record.target, "SKILL.md"))); if (record.action.expectedDigest && actual !== record.action.expectedDigest) throw new Error(`Target changed after discovery: ${record.target}`); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Target disappeared after discovery: ${record.target}`); throw error; }
+  if (!record.action.expectedDigest) return;
+  try { const actual = hash(await readFile(join(record.target, "SKILL.md"))); if (actual !== record.action.expectedDigest) throw new Error(`Target changed after discovery: ${record.target}`); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`Target disappeared after discovery: ${record.target}`); throw error; }
 };
 const defaults = {
   mkdir: (path: string, options: { recursive?: boolean }) => mkdir(path, options),
@@ -38,10 +39,13 @@ const defaults = {
   nonce: randomUUID,
 };
 
-export async function discover(root: string, actions: readonly { id: string; digest: string }[]): Promise<ReadonlyMap<string, Collision>> {
-  const skills = skillRoot(root); await safeTree(root, skills); const found = new Map<string, Collision>();
-  for (const action of actions) { const path = target(root, action.id); await safeTree(skills, path); try { const stat = await lstat(path); if (!stat.isDirectory()) throw new Error(`Expected skill directory: ${path}`); const file = join(path, "SKILL.md"); await safeExisting(file, false); const fileStat = await lstat(file); if (!fileStat.isFile()) throw new Error(`Expected skill file: ${file}`); found.set(action.id, { id: action.id, target: file, oldDigest: hash(await readFile(file)) }); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
-  return found;
+/** Temporary Unit 2 boundary adapter. Unit 3A replaces it with nested-tree transaction input. */
+export function toSingleFileTransactionActions(actions: readonly PlannedSkill[], decisions: readonly InstallDecision[], discoveries: ReadonlyMap<string, Discovery>): readonly InstallAction[] {
+  return actions.map((action, index) => {
+    if (action.tree.paths.length !== 1 || action.tree.paths[0] !== "SKILL.md") throw new Error("Unit 3A required: transaction accepts only verified one-file SKILL.md trees");
+    const discovery = discoveries.get(action.id); const expectedDigest = discovery?.inventory.find((entry) => entry.path === "SKILL.md" && entry.kind === "file")?.digest;
+    return Object.freeze({ id: action.id, digest: action.digest, bytes: action.tree.bytes("SKILL.md"), decision: decisions[index], expectedDigest });
+  });
 }
 
 export async function install(root: string, input: readonly InstallAction[], injected: InstallFs = {}): Promise<InstallResult> {
