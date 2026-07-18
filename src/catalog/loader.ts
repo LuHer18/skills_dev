@@ -33,7 +33,3 @@ export async function loadCatalog(catalogRoot: string): Promise<LoadedCatalog> {
   if (skillEntries.some((entry) => !entry.isDirectory() || entry.isSymbolicLink()) || actualIds.length !== expectedIds.length || actualIds.some((id, index) => id !== expectedIds[index])) fail("catalog source inventory");
   return Object.freeze({ catalog, trees: new VerifiedTrees(await Promise.all(catalog.skills.map(async (skill) => [skill.id, await verifySkill(catalogRoot, skill)] as const))) });
 }
-/** Temporary Unit 1 projection for legacy one-file consumers; remove in Unit 2. */
-export function projectSingleFileAssets(trees: ReadonlyMap<string, VerifiedSkillTree>): ReadonlyMap<string, Buffer> {
-  return new Map([...trees].sort(([left], [right]) => left.localeCompare(right)).map(([id, tree]) => { if (tree.paths.length !== 1 || tree.paths[0] !== "SKILL.md") throw new Error("Temporary projection requires one-file SKILL.md trees"); return [id, tree.bytes("SKILL.md")] as const; }));
-}

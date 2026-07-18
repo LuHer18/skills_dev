@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { loadCatalog, projectSingleFileAssets } from "../src/catalog/loader.js";
+import { loadCatalog } from "../src/catalog/loader.js";
 import { parseCatalog } from "../src/catalog/schema.js";
 import { runApp } from "../src/app.js";
 
@@ -18,20 +18,19 @@ async function fixture(manifest: unknown, files: Record<string, string | Buffer>
   await writeFile(join(root, "catalog.json"), JSON.stringify(manifest)); return root;
 }
 
-test("packaged v2 catalog loads seven ordered one-file trees with byte-exact projections", async () => {
-  const loaded = await loadCatalog(packagedCatalog); const assets = projectSingleFileAssets(loaded.trees);
-  assert.deepEqual([...assets.keys()], ["nodejs", "react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing", "sap-ui5", "spring-boot"]);
+test("packaged v2 catalog loads seven ordered one-file trees with byte-exact tree bytes", async () => {
+  const loaded = await loadCatalog(packagedCatalog);
+  assert.deepEqual([...loaded.trees.keys()], ["nodejs", "react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing", "sap-ui5", "spring-boot"]);
   for (const skill of loaded.catalog.skills) {
     const file = skill.files[0]; const bytes = await readFile(new URL(`../../catalog/skills/${skill.id}/${file.path}`, import.meta.url));
-    assert.deepEqual(assets.get(skill.id), bytes); assert.equal(hash(bytes), file.digest);
+    assert.deepEqual(loaded.trees.get(skill.id)!.bytes(file.path), bytes); assert.equal(hash(bytes), file.digest);
   }
 });
 
-test("verified trees and legacy projection return private byte copies", async () => {
+test("verified trees return private byte copies", async () => {
   const root = await fixture(valid()); try {
     const { trees } = await loadCatalog(root); const tree = trees.get("safe")!; const first = tree.bytes("SKILL.md"); first[0] = 121;
-    assert.equal(tree.bytes("SKILL.md").toString(), "x"); const assets = projectSingleFileAssets(trees); assets.get("safe")![0] = 121;
-    assert.equal(projectSingleFileAssets(trees).get("safe")!.toString(), "x");
+    assert.equal(tree.bytes("SKILL.md").toString(), "x");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -70,10 +69,10 @@ test("loader rejects mismatches, invalid Markdown bytes, and non-exact source tr
   for (const [manifest, files, setup] of cases) { const root = await fixture(manifest, files); roots.push(root); await setup(root); await assert.rejects(loadCatalog(root), /Invalid catalog/); }
 });
 
-test("React detection preserves existing CLI installation bytes through the temporary v2 projection", async (t) => {
+test("React detection preserves existing CLI installation bytes through verified trees", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "react-install-")); t.after(() => rm(root, { recursive: true, force: true }));
   const loaded = await loadCatalog(packagedCatalog); const output: string[] = [];
   const dependencies = { cwd: () => root, resolve: (value: string) => value, loadCatalog: async () => loaded, detectStacks: async () => ({ stacks: ["react" as const], warnings: [] }), write: (text: string) => output.push(text) };
   assert.equal(await runApp([], dependencies), 0);
-  for (const id of ["react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing"]) assert.deepEqual(await readFile(join(root, ".agents", "skills", id, "SKILL.md")), projectSingleFileAssets(loaded.trees).get(id));
+  for (const id of ["react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing"]) assert.deepEqual(await readFile(join(root, ".agents", "skills", id, "SKILL.md")), loaded.trees.get(id)!.bytes("SKILL.md"));
 });
