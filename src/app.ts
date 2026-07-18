@@ -5,7 +5,7 @@ import { loadCatalog, type LoadedCatalog } from "./catalog/loader.js";
 import { detectStacks, type Detection } from "./detect/index.js";
 import { createPlan, discoverDestinations } from "./plan.js";
 import { renderReport } from "./report.js";
-import { install, toSingleFileTransactionActions } from "./install/transaction.js";
+import { install } from "./install/transaction.js";
 import { resolveCollisions, type Prompt } from "./prompt.js";
 
 export interface CliOptions { readonly cwd?: string; readonly dryRun: boolean; readonly force: boolean; readonly help?: boolean; readonly version?: boolean }
@@ -50,7 +50,7 @@ export async function runApp(argv: readonly string[], injected?: AppDependencies
     const decisions = await resolveCollisions(plan.actions, discoveries, dependencies.prompt ?? { isTTY: false, confirm: async () => false }, options.force);
     if (options.dryRun) { dependencies.write(renderReport(plan.actions.map((action, index) => ({ id: action.id, status: decisions[index] })), detection.warnings, "dry-run")); return 0; }
     if (options.force) for (const [index, action] of plan.actions.entries()) if (decisions[index] === "replace") dependencies.write(`Warning: --force replaces the entire skill tree at ${discoveries.get(action.id)!.target}. This removes every existing file, including user-added files.\n`);
-    let result; try { result = await install(root, toSingleFileTransactionActions(plan.actions, decisions, discoveries)); } catch (error) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "fail" as const })), detection.warnings, "failure")); throw error; }
+    let result; try { result = await install(root, plan.actions.map((action, index) => ({ ...action, decision: decisions[index], discovery: discoveries.get(action.id)! }))); } catch (error) { dependencies.write(renderReport(plan.actions.map((action) => ({ id: action.id, status: "fail" as const })), detection.warnings, "failure")); throw error; }
     dependencies.write(renderReport(result.actions, detection.warnings, result.outcome));
     return 0;
   } catch (error: unknown) {

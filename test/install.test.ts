@@ -1,119 +1,70 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, mkdir, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
+import { createServer } from "node:net";
 import test from "node:test";
-import { install, type InstallFs } from "../src/install/transaction.js";
+import { VerifiedSkillTree } from "../src/catalog/loader.js";
+import { inventoryTree } from "../src/install/paths.js";
+import { install, type InstallAction, type InstallFs } from "../src/install/transaction.js";
 import { acquireLock } from "../src/install/lock.js";
 
-const digest = (byte: string) => byte.repeat(64);
-async function root() { return mkdtemp(join(tmpdir(), "skill-installer-")); }
-async function skill(base: string, id: string, value: string) { const path = join(base, ".agents", "skills", id); await mkdir(path, { recursive: true }); await writeFile(join(path, "SKILL.md"), value); }
-const action = (id: string, value: string, decision: "install" | "replace" | "skip" = "install") => ({ id, digest: digest(id[0]), bytes: Buffer.from(value), decision });
-const oldDigest = (value: string) => createHash("sha256").update(value).digest("hex");
+async function root() { return mkdtemp(join(process.platform === "win32" ? tmpdir() : "/tmp", "skill-installer-")); }
+const tree = (files: Record<string, string>) => new VerifiedSkillTree(new Map(Object.entries(files).map(([path, value]) => [path, Buffer.from(value)])));
+async function writeTree(base: string, id: string, files: Record<string, string>) { for (const [path, value] of Object.entries(files)) { const file = join(base, ".agents", "skills", id, path); await mkdir(join(file, ".."), { recursive: true }); await writeFile(file, value); } }
+async function action(base: string, id: string, files: Record<string, string>, decision: "install" | "replace" | "skip" = "install"): Promise<InstallAction> { const target = join(base, ".agents", "skills", id); const inventory = decision === "replace" ? await inventoryTree(target) : []; return { id, digest: id[0].repeat(64), tree: tree(files), decision, discovery: { id, target, state: decision === "replace" ? "directory" : "absent", inventory } }; }
+async function files(base: string, id: string) { const result: Record<string, string> = {}; const walk = async (dir: string, prefix = "") => { for (const entry of await (await import("node:fs/promises")).readdir(dir, { withFileTypes: true })) { const path = prefix ? `${prefix}/${entry.name}` : entry.name; if (entry.isDirectory()) await walk(join(dir, entry.name), path); else result[path] = await readFile(join(dir, entry.name), "utf8"); } }; await walk(join(base, ".agents", "skills", id)); return result; }
 
-test("installs, replaces, skips, and reports ID-sorted deterministic outcomes", async (t) => {
+test("stages and atomically installs, replaces, and skips complete nested trees", async (t) => {
   const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  await skill(base, "beta", "old"); await skill(base, "skip", "keep");
-  const result = await install(base, [action("beta", "new", "replace"), action("alpha", "new"), action("skip", "ignored", "skip")]);
-  assert.deepEqual(result.actions, [{ id: "alpha", status: "install" }, { id: "beta", status: "replace" }, { id: "skip", status: "skip" }]);
-  assert.equal(await readFile(join(base, ".agents/skills/alpha/SKILL.md"), "utf8"), "new");
-  assert.equal(await readFile(join(base, ".agents/skills/beta/SKILL.md"), "utf8"), "new");
-  assert.equal(await readFile(join(base, ".agents/skills/skip/SKILL.md"), "utf8"), "keep");
+  await writeTree(base, "replace", { "SKILL.md": "old", "references/stale.md": "stale", "user.md": "user" }); await writeTree(base, "skip", { "SKILL.md": "keep", "user.md": "keep" });
+  const result = await install(base, [await action(base, "install", { "SKILL.md": "new", "references/java.md": "17", "references/spring.md": "boot" }), await action(base, "replace", { "SKILL.md": "new", "references/java.md": "21" }, "replace"), await action(base, "skip", { "SKILL.md": "ignored" }, "skip")]);
+  assert.deepEqual(result.actions, [{ id: "install", status: "install" }, { id: "replace", status: "replace" }, { id: "skip", status: "skip" }]);
+  assert.deepEqual(await files(base, "install"), { "SKILL.md": "new", "references/java.md": "17", "references/spring.md": "boot" }); assert.deepEqual(await files(base, "replace"), { "SKILL.md": "new", "references/java.md": "21" }); assert.deepEqual(await files(base, "skip"), { "SKILL.md": "keep", "user.md": "keep" });
 });
 
-test("rejects symlinks and contention before mutation, and orphan journals fail closed", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  await mkdir(join(base, ".agents")); await symlink(tmpdir(), join(base, ".agents", "skills"));
-  await assert.rejects(install(base, [action("alpha", "new")]), /symlink/);
-  await rm(join(base, ".agents"), { recursive: true }); await mkdir(join(base, ".agents", "skills"), { recursive: true });
-  const release = await acquireLock(base); await assert.rejects(install(base, [action("alpha", "new")]), /lock/); await release();
-  const brokenRelease = await acquireLock(base); await rm(join(base, ".agents/skills/.project-skill-installer.lock")); await mkdir(join(base, ".agents/skills/.project-skill-installer.lock")); await assert.rejects(brokenRelease(), /Failed to release/); await rm(join(base, ".agents/skills/.project-skill-installer.lock"), { recursive: true, force: true });
-  await writeFile(join(base, ".agents", "skills", ".project-skill-installer.journal"), "orphan");
-  await assert.rejects(install(base, [action("alpha", "new")]), /Recovery required/);
-});
-
-test("mutation failures reverse creations and replacements, retaining recovery paths when rollback fails", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await skill(base, "beta", "old");
-  let calls = 0;
-  const fs: InstallFs = { rename: async (from: string, to: string) => { if (++calls === 3) throw new Error("injected rename"); return (await import("node:fs/promises")).rename(from, to); } };
-  await assert.rejects(install(base, [action("alpha", "new"), action("beta", "new", "replace")], fs), /injected rename/);
-  await assert.rejects(readFile(join(base, ".agents/skills/alpha/SKILL.md")));
-  assert.equal(await readFile(join(base, ".agents/skills/beta/SKILL.md"), "utf8"), "old");
-  calls = 0;
-  const brokenRollback: InstallFs = { rename: async (from: string, to: string) => { if (++calls === 3 || calls === 4) throw new Error("injected rename"); return (await import("node:fs/promises")).rename(from, to); } };
-  await assert.rejects(install(base, [action("alpha", "new"), action("beta", "new", "replace")], brokenRollback), /Recovery required: .*backup.*stage/);
-});
-
-test("fault seam covers pre-target, journal, stage, and commit boundaries", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  const target = join(base, ".agents/skills/alpha/SKILL.md");
-  const cases: readonly [string, string, InstallFs][] = [
-    ["root/skills mkdir", "mkdir", { mkdir: async () => { throw new Error("mkdir fault"); } }],
-    ["lock create", "lock", { createLock: async () => { throw new Error("lock fault"); } }],
-    ["journal create", "journal", { journalCreate: async () => { throw new Error("journal create fault"); } }],
-    ["journal update", "journal", { journalUpdate: async () => { throw new Error("journal update fault"); } }],
-    ["journal flush", "journal", { journalFlush: async () => { throw new Error("journal flush fault"); } }],
-    ["stage mkdir", "stage", { mkdir: async (path, options) => path.includes(".stage-") ? Promise.reject(new Error("stage mkdir fault")) : mkdir(path, options) }],
-    ["stage write", "stage", { writeFile: async (path, bytes) => path.includes(".stage-") ? Promise.reject(new Error("stage write fault")) : writeFile(path, bytes) }],
-  ];
-  for (const [name, expected, fs] of cases) {
-    await rm(join(base, ".agents"), { recursive: true, force: true });
-    await assert.rejects(install(base, [action("alpha", "new")], fs), new RegExp(expected));
-    await assert.rejects(readFile(target), `target mutated before ${name}`);
+test("rejects nested symlinks and non-directory targets before replacement", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await writeTree(base, "alpha", { "SKILL.md": "old", "references/a.md": "old" });
+  await rm(join(base, ".agents/skills/alpha/references/a.md")); await symlink(tmpdir(), join(base, ".agents/skills/alpha/references/a.md"));
+  await assert.rejects(action(base, "alpha", { "SKILL.md": "new" }, "replace"), /symlink/);
+  await mkdir(join(base, ".agents", "skills", "file-target"), { recursive: true }); await rm(join(base, ".agents", "skills", "file-target"), { recursive: true }); await writeFile(join(base, ".agents", "skills", "file-target"), "file");
+  await assert.rejects(install(base, [await action(base, "file-target", { "SKILL.md": "new" })]), /Expected directory/);
+  if (process.platform !== "win32") {
+    await writeTree(base, "special", { "SKILL.md": "old", "references/a.md": "old" }); const socket = createServer(); const socketPath = join(base, ".agents/skills/special/references/node.sock"); await new Promise<void>((done) => socket.listen(socketPath, done));
+    await assert.rejects(action(base, "special", { "SKILL.md": "new" }, "replace"), /Unsafe destination node/); await new Promise<void>((done) => socket.close(() => done()));
   }
 });
 
-test("backup, commit, cleanup, and rollback faults preserve recoverability", async (t) => {
+test("re-inventory rejects static appearance, disappearance, type, path, and byte races", async (t) => {
   const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  await skill(base, "alpha", "old"); const target = join(base, ".agents/skills/alpha/SKILL.md");
-  let renames = 0;
-  await assert.rejects(install(base, [action("alpha", "new", "replace")], { rename: async (from, to) => { if (++renames === 1) throw new Error("backup fault"); await rename(from, to); } }), /backup fault/);
-  assert.equal(await readFile(target, "utf8"), "old");
-  renames = 0;
-  await assert.rejects(install(base, [action("alpha", "new", "replace")], { rename: async (from, to) => { if (++renames === 2) throw new Error("commit fault"); await rename(from, to); } }), /commit fault/);
-  assert.equal(await readFile(target, "utf8"), "old");
-  let backupObserved = false;
-  await assert.rejects(install(base, [action("alpha", "new", "replace")], { rm: async (path, options) => { if (path.includes(".backup-")) { backupObserved = (await lstat(target)).isFile(); throw new Error("cleanup fault"); } await rm(path, options); } }), /Finalization incomplete.*cleanup fault/);
-  assert.equal(backupObserved, true, "backup survives until success cleanup"); assert.equal(await readFile(target, "utf8"), "new");
-  await rm(join(base, ".agents/skills/.project-skill-installer.journal"));
-  renames = 0;
-  await assert.rejects(install(base, [action("alpha", "new", "replace")], { rename: async (from, to) => { if (++renames === 2 || renames === 3) throw new Error("rollback restore fault"); await rename(from, to); }, rm: async (path, options) => { if (path === target) throw new Error("rollback removal fault"); await rm(path, options); } }), /Recovery required: .*backup.*stage/);
+  const appeared = await action(base, "appeared", { "SKILL.md": "new" }); await writeTree(base, "appeared", { "SKILL.md": "other" }); await assert.rejects(install(base, [appeared]), /appeared/);
+  for (const [id, mutate] of [["gone", async () => rm(join(base, ".agents/skills/gone/SKILL.md"))], ["type", async () => { await rm(join(base, ".agents/skills/type/SKILL.md")); await mkdir(join(base, ".agents/skills/type/SKILL.md")); }], ["path", async () => writeFile(join(base, ".agents/skills/path/extra.md"), "extra")], ["bytes", async () => writeFile(join(base, ".agents/skills/bytes/SKILL.md"), "changed")]] as const) { await writeTree(base, id, { "SKILL.md": "old" }); const planned = await action(base, id, { "SKILL.md": "new" }, "replace"); await mutate(); await assert.rejects(install(base, [planned]), /changed after discovery/); }
 });
 
-test("lock-release failure is operational after a successful commit", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  await assert.rejects(install(base, [action("alpha", "new")], { releaseLock: async () => { throw new Error("release fault"); } }), /Failed to release installer lock/);
-  assert.equal(await readFile(join(base, ".agents/skills/alpha/SKILL.md"), "utf8"), "new");
+test("injected post-stage appearance, disappearance, type, path, and byte races fail before swap", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await writeTree(base, "alpha", { "SKILL.md": "old", "references/a.md": "old" });
+  const race = await action(base, "alpha", { "SKILL.md": "new", "references/a.md": "new" }, "replace"); let changed = false;
+  await assert.rejects(install(base, [race], { journalUpdate: async (_path, line) => { if (line.includes('"staged"') && !changed) { changed = true; await writeFile(join(base, ".agents/skills/alpha/SKILL.md"), "race"); } } }), /changed after discovery/); assert.deepEqual(await files(base, "alpha"), { "SKILL.md": "race", "references/a.md": "old" });
+  for (const [id, decision, mutate] of [["injected-appear", "install", async () => writeTree(base, "injected-appear", { "SKILL.md": "race" })], ["injected-gone", "replace", async () => rm(join(base, ".agents/skills/injected-gone"), { recursive: true })], ["injected-type", "replace", async () => { await rm(join(base, ".agents/skills/injected-type/SKILL.md")); await mkdir(join(base, ".agents/skills/injected-type/SKILL.md")); }], ["injected-path", "replace", async () => writeFile(join(base, ".agents/skills/injected-path/extra.md"), "race")], ["injected-bytes", "replace", async () => writeFile(join(base, ".agents/skills/injected-bytes/SKILL.md"), "race")]] as const) { if (decision === "replace") await writeTree(base, id, { "SKILL.md": "old" }); const planned = await action(base, id, { "SKILL.md": "new" }, decision); let once = false; await assert.rejects(install(base, [planned], { journalUpdate: async (_path, line) => { if (line.includes('"staged"') && !once) { once = true; await mutate(); } } }), /appeared|ENOENT|changed/); }
 });
 
-test("rollback recovery summary names every affected target, backup, and stage in sorted order", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await skill(base, "beta", "old");
-  let renames = 0;
-  await assert.rejects(install(base, [action("beta", "new", "replace"), action("alpha", "new")], {
-    rename: async (from, to) => { if (++renames === 3 || renames === 4) throw new Error("rename fault"); await rename(from, to); },
-    rm: async (path, options) => { if (basename(path) === "alpha") throw new Error("remove fault"); await rm(path, options); },
-  }), (error: Error) => {
-    const message = error.message; const alpha = join(base, ".agents/skills/alpha"); const beta = join(base, ".agents/skills/beta");
-    assert.ok(message.includes(`${alpha} (backup ${join(base, ".agents/skills/.alpha.backup-")}`));
-    assert.ok(message.includes(`${beta} (backup ${join(base, ".agents/skills/.beta.backup-")}`));
-    assert.ok(message.indexOf(alpha) < message.indexOf(beta)); return true;
-  });
+test("rollback restores whole old trees after a later atomic swap fault", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await writeTree(base, "alpha", { "SKILL.md": "old", "references/a.md": "old" });
+  await writeTree(base, "beta", { "SKILL.md": "old", "references/b.md": "old" }); const alpha = await action(base, "alpha", { "SKILL.md": "new" }, "replace"); const beta = await action(base, "beta", { "SKILL.md": "new" }, "replace"); let renames = 0;
+  await assert.rejects(install(base, [alpha, beta], { rename: async (from, to) => { if (++renames === 4) throw new Error("fault"); await rename(from, to); } }), /fault/); assert.deepEqual(await files(base, "alpha"), { "SKILL.md": "old", "references/a.md": "old" }); assert.deepEqual(await files(base, "beta"), { "SKILL.md": "old", "references/b.md": "old" });
 });
 
-test("recorded decisions reject targets that appear or change after discovery", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true }));
-  await skill(base, "alpha", "appeared");
-  await assert.rejects(install(base, [{ ...action("alpha", "new"), expectedDigest: undefined }]), /appeared after discovery/);
-  await skill(base, "beta", "old"); await writeFile(join(base, ".agents/skills/beta/SKILL.md"), "changed");
-  await assert.rejects(install(base, [{ ...action("beta", "new", "replace"), expectedDigest: oldDigest("old") }]), /changed after discovery/);
-  assert.equal(await readFile(join(base, ".agents/skills/alpha/SKILL.md"), "utf8"), "appeared"); assert.equal(await readFile(join(base, ".agents/skills/beta/SKILL.md"), "utf8"), "changed");
+test("post-revalidation rename races restore the complete captured old tree", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await writeTree(base, "alpha", { "SKILL.md": "old", "references/a.md": "old" }); const input = await action(base, "alpha", { "SKILL.md": "new" }, "replace"); let raced = false;
+  await assert.rejects(install(base, [input], { rename: async (from, to) => { if (!raced) { raced = true; await writeFile(join(base, ".agents/skills/alpha/user.md"), "user"); } await rename(from, to); } }), /changed after discovery/); assert.deepEqual(await files(base, "alpha"), { "SKILL.md": "old", "references/a.md": "old", "user.md": "user" });
 });
 
-test("cleanup failure after an irreversible boundary retains committed replacements and remaining backup", async (t) => {
-  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await skill(base, "alpha", "old-alpha"); await skill(base, "beta", "old-beta");
-  await assert.rejects(install(base, ["alpha", "beta"].map((id) => ({ ...action(id, `new-${id}`, "replace"), expectedDigest: oldDigest(`old-${id}`) })), { rm: async (path, options) => { if (path.includes(".beta.backup-")) throw new Error("cleanup fault"); await rm(path, options); } }), /Finalization incomplete.*cleanup fault/);
-  assert.equal(await readFile(join(base, ".agents/skills/alpha/SKILL.md"), "utf8"), "new-alpha"); assert.equal(await readFile(join(base, ".agents/skills/beta/SKILL.md"), "utf8"), "new-beta");
-  const backup = (await readdir(join(base, ".agents/skills"))).find((name) => name.startsWith(".beta.backup-")); assert.ok(backup); assert.equal(await readFile(join(base, ".agents/skills", backup, "SKILL.md"), "utf8"), "old-beta");
+test("stage write failure leaves no partial final tree", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); const input = await action(base, "alpha", { "SKILL.md": "new", "references/a.md": "new" });
+  const fs: InstallFs = { writeFile: async (path, value) => { if (path.includes("references")) throw new Error("write fault"); await writeFile(path, value); } }; await assert.rejects(install(base, [input], fs), /write fault/); await assert.rejects(readFile(join(base, ".agents/skills/alpha/SKILL.md")));
+});
+
+test("existing lock and journal recovery boundaries remain fail-closed", async (t) => {
+  const base = await root(); t.after(() => rm(base, { recursive: true, force: true })); await mkdir(join(base, ".agents", "skills"), { recursive: true }); const input = await action(base, "alpha", { "SKILL.md": "new" });
+  const release = await acquireLock(base); await assert.rejects(install(base, [input]), /lock/); await release(); await writeFile(join(base, ".agents/skills/.project-skill-installer.journal"), "orphan"); await assert.rejects(install(base, [input]), /Recovery required/);
 });
