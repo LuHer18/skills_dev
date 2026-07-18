@@ -14,6 +14,8 @@
     "typecheck": "tsc --noEmit",
     "test": "pnpm run build && node --test dist/test/*.test.js",
     "test:catalog": "pnpm run build && node --test dist/test/catalog.test.js",
+    "test:contracts": "pnpm run build && node --test dist/test/skill-contracts.test.js",
+    "check:catalog-digests": "node scripts/update-catalog-digests.mjs --check",
     "test:detector": "pnpm run build && node --test dist/test/detect.test.js",
     "test:pack": "pnpm run build && node --test dist/test/pack.test.js"
   },

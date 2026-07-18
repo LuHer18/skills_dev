@@ -1,10 +1,62 @@
 {
   "schemaVersion": 1,
-  "catalogVersion": "1.0.0",
+  "catalogVersion": "2.0.0",
   "skills": [
-    { "id": "nodejs", "stacks": ["nodejs"], "path": "skills/nodejs/SKILL.md", "digest": "e25a5de542f705623fc3db32a0b24b9f61d881eac79a698add339b29b9b7c996" },
-    { "id": "react", "stacks": ["react"], "path": "skills/react/SKILL.md", "digest": "60671dfd6edcf53ee191aa04b4001d0ffa8c0241daf1431154bb23413f6212b6" },
-    { "id": "sap-ui5", "stacks": ["sap-ui5"], "path": "skills/sap-ui5/SKILL.md", "digest": "2b9f04fd2b2d114edcbabeaa9f88ca48694c45225c4090b0793ad54c52a4cd6d" },
-    { "id": "spring-boot", "stacks": ["spring-boot"], "path": "skills/spring-boot/SKILL.md", "digest": "353fa6efb35090da2ae340dd548a445546e9644af19e7f1a3fc1b353423981c4" }
+    {
+      "id": "nodejs",
+      "stacks": [
+        "nodejs"
+      ],
+      "path": "skills/nodejs/SKILL.md",
+      "digest": "e25a5de542f705623fc3db32a0b24b9f61d881eac79a698add339b29b9b7c996"
+    },
+    {
+      "id": "react-architecture",
+      "stacks": [
+        "react"
+      ],
+      "path": "skills/react-architecture/SKILL.md",
+      "digest": "c180c375bbcd56188f394c01b3aa74676dfb597f0fbadb725e390bb9fca75570"
+    },
+    {
+      "id": "react-quality-safeguards",
+      "stacks": [
+        "react"
+      ],
+      "path": "skills/react-quality-safeguards/SKILL.md",
+      "digest": "67f9f42469328f98d3fa0fb0bce38d4aa63af037d82f63d57c79621ee0fb859f"
+    },
+    {
+      "id": "react-state-data-integration",
+      "stacks": [
+        "react"
+      ],
+      "path": "skills/react-state-data-integration/SKILL.md",
+      "digest": "c9ec69619016a0b49aed8b8cfadadfbe7ff7670f267cc0f6b2856aa7d49574c7"
+    },
+    {
+      "id": "react-testing",
+      "stacks": [
+        "react"
+      ],
+      "path": "skills/react-testing/SKILL.md",
+      "digest": "481a55b434fb88dca526b58588c321c88d8ff8cd7531ba9ce89654c4e85b75c3"
+    },
+    {
+      "id": "sap-ui5",
+      "stacks": [
+        "sap-ui5"
+      ],
+      "path": "skills/sap-ui5/SKILL.md",
+      "digest": "2b9f04fd2b2d114edcbabeaa9f88ca48694c45225c4090b0793ad54c52a4cd6d"
+    },
+    {
+      "id": "spring-boot",
+      "stacks": [
+        "spring-boot"
+      ],
+      "path": "skills/spring-boot/SKILL.md",
+      "digest": "353fa6efb35090da2ae340dd548a445546e9644af19e7f1a3fc1b353423981c4"
+    }
   ]
 }

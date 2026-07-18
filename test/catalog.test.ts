@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadCatalog } from "../src/catalog/loader.js";
 import { parseCatalog } from "../src/catalog/schema.js";
+import { runApp } from "../src/app.js";
 
 const packagedCatalog = fileURLToPath(new URL("../../catalog/", import.meta.url));
 const digest = "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881";
@@ -20,8 +22,29 @@ const valid = () => ({ schemaVersion: 1, catalogVersion: "1.0.0", skills: [{ id:
 
 test("catalog loads packaged skills offline in ID order independent of network", async () => {
   const loaded = await loadCatalog(packagedCatalog);
-  assert.deepEqual([...loaded.assets.keys()], ["nodejs", "react", "sap-ui5", "spring-boot"]);
-  assert.equal(loaded.assets.get("react")?.toString().includes("React"), true);
+  assert.deepEqual([...loaded.assets.keys()], ["nodejs", "react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing", "sap-ui5", "spring-boot"]);
+  const react = loaded.catalog.skills.filter((skill) => skill.stacks.includes("react"));
+  assert.deepEqual(react.map((skill) => skill.id), ["react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing"]);
+  for (const skill of react) {
+    const bytes = await readFile(new URL(`../../catalog/${skill.path}`, import.meta.url));
+    assert.deepEqual(loaded.assets.get(skill.id), bytes);
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), skill.digest);
+  }
+});
+
+test("React detection installs all and only sorted React IDs with verified bytes", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "react-install-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const loaded = await loadCatalog(packagedCatalog);
+  const ids = ["react-architecture", "react-quality-safeguards", "react-state-data-integration", "react-testing"];
+  const output: string[] = [];
+  const dependencies = { cwd: () => root, resolve: (value: string) => value, loadCatalog: async () => loaded, detectStacks: async () => ({ stacks: ["react" as const], warnings: [] }), write: (text: string) => output.push(text) };
+  assert.equal(await runApp(["--dry-run"], dependencies), 0);
+  assert.deepEqual(output[0].match(/- install [\w-]+/g), ids.map((id) => `- install ${id}`));
+  await assert.rejects(readFile(join(root, ".agents", "skills", ids[0], "SKILL.md")));
+  assert.equal(await runApp([], dependencies), 0);
+  assert.deepEqual(await (await import("node:fs/promises")).readdir(join(root, ".agents", "skills")), ids);
+  for (const id of ids) assert.deepEqual(await readFile(join(root, ".agents", "skills", id, "SKILL.md")), loaded.assets.get(id));
 });
 
 test("catalog canonicalizes skills and assets independently of manifest entry order", async () => {
