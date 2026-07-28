@@ -26,14 +26,12 @@ async function verifySkill(root: string, skill: Skill): Promise<VerifiedSkillTre
   return new VerifiedSkillTree(new Map(await Promise.all(skill.files.map(async (file) => [file.path, await readVerifiedAsset(join(dir, ...file.path.split(posix.sep)), file.digest)] as const))));
 }
 export async function loadCatalog(catalogRoot: string): Promise<LoadedCatalog> {
-  const manifest = join(catalogRoot, "catalog.json"); const stat = await lstat(manifest); if (!stat.isFile() || stat.isSymbolicLink()) fail("manifest is not a regular file");
+  const manifest = join(catalogRoot, "catalog.json"); let stat;
+  try { stat = await lstat(manifest); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") fail("packed catalog unavailable"); throw error; }
+  if (!stat.isFile() || stat.isSymbolicLink()) fail("manifest is not a regular file");
   let parsed: unknown; try { parsed = JSON.parse(await readFile(manifest, "utf8")); } catch { fail("manifest JSON"); }
   const catalog = parseCatalog(parsed); const skillsDir = join(catalogRoot, "skills"); const skillEntries = await readdir(skillsDir, { withFileTypes: true });
   const expectedIds = catalog.skills.map((skill) => skill.id); const actualIds = skillEntries.map((entry) => entry.name).sort();
   if (skillEntries.some((entry) => !entry.isDirectory() || entry.isSymbolicLink()) || actualIds.length !== expectedIds.length || actualIds.some((id, index) => id !== expectedIds[index])) fail("catalog source inventory");
   return Object.freeze({ catalog, trees: new VerifiedTrees(await Promise.all(catalog.skills.map(async (skill) => [skill.id, await verifySkill(catalogRoot, skill)] as const))) });
-}
-/** Temporary Unit 1 projection for legacy one-file consumers; remove in Unit 2. */
-export function projectSingleFileAssets(trees: ReadonlyMap<string, VerifiedSkillTree>): ReadonlyMap<string, Buffer> {
-  return new Map([...trees].sort(([left], [right]) => left.localeCompare(right)).map(([id, tree]) => { if (tree.paths.length !== 1 || tree.paths[0] !== "SKILL.md") throw new Error("Temporary projection requires one-file SKILL.md trees"); return [id, tree.bytes("SKILL.md")] as const; }));
 }
