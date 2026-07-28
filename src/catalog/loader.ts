@@ -26,7 +26,9 @@ async function verifySkill(root: string, skill: Skill): Promise<VerifiedSkillTre
   return new VerifiedSkillTree(new Map(await Promise.all(skill.files.map(async (file) => [file.path, await readVerifiedAsset(join(dir, ...file.path.split(posix.sep)), file.digest)] as const))));
 }
 export async function loadCatalog(catalogRoot: string): Promise<LoadedCatalog> {
-  const manifest = join(catalogRoot, "catalog.json"); const stat = await lstat(manifest); if (!stat.isFile() || stat.isSymbolicLink()) fail("manifest is not a regular file");
+  const manifest = join(catalogRoot, "catalog.json"); let stat;
+  try { stat = await lstat(manifest); } catch (error: unknown) { if ((error as NodeJS.ErrnoException).code === "ENOENT") fail("packed catalog unavailable"); throw error; }
+  if (!stat.isFile() || stat.isSymbolicLink()) fail("manifest is not a regular file");
   let parsed: unknown; try { parsed = JSON.parse(await readFile(manifest, "utf8")); } catch { fail("manifest JSON"); }
   const catalog = parseCatalog(parsed); const skillsDir = join(catalogRoot, "skills"); const skillEntries = await readdir(skillsDir, { withFileTypes: true });
   const expectedIds = catalog.skills.map((skill) => skill.id); const actualIds = skillEntries.map((entry) => entry.name).sort();
