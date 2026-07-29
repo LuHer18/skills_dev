@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,8 +11,10 @@ import { parseCatalog } from "../src/catalog/schema.js";
 import { runApp } from "../src/app.js";
 
 const packagedCatalog = fileURLToPath(new URL("../../catalog/", import.meta.url));
+const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const hash = (bytes: string | Buffer) => createHash("sha256").update(bytes).digest("hex");
 const valid = (files = [{ path: "SKILL.md", digest: hash("x") }]) => ({ schemaVersion: 2, catalogVersion: "2.0.0", skills: [{ id: "safe", stacks: ["nodejs"], files }] });
+const updateDigests = (root: string) => new Promise<void>((resolveRun, reject) => execFile(process.execPath, ["scripts/update-catalog-digests.mjs"], { cwd: root, env: { ...process.env, LANG: "da_DK.UTF-8", LC_ALL: "da_DK.UTF-8" } }, (error) => error ? reject(error) : resolveRun()));
 async function fixture(manifest: unknown, files: Record<string, string | Buffer> = { "SKILL.md": "x" }) {
   const root = await mkdtemp(join(tmpdir(), "catalog-"));
   await Promise.all(Object.entries(files).map(async ([path, bytes]) => { const file = join(root, "skills", "safe", path); await mkdir(join(file, ".."), { recursive: true }); await writeFile(file, bytes); }));
@@ -37,6 +40,22 @@ test("verified trees return private byte copies", async () => {
 test("loader accepts a canonical tree with shared reference directories", async () => {
   const files = ["SKILL.md", "references/a.md", "references/b.md"].map((path) => ({ path, digest: hash(path === "SKILL.md" ? "x" : path[11]) })); const root = await fixture(valid(files), { "SKILL.md": "x", "references/a.md": "a", "references/b.md": "b" });
   try { assert.deepEqual((await loadCatalog(root)).trees.get("safe")!.paths, files.map((file) => file.path)); } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("digest updater writes ordinal file order accepted by the production schema", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "catalog-digest-order-")); t.after(() => rm(root, { recursive: true, force: true }));
+  await cp(join(projectRoot, "scripts"), join(root, "scripts"), { recursive: true });
+  const paths = ["references/example.md", "SKILL.md"];
+  const skills = ["ab", "aa"].map((id) => ({ id, stacks: ["nodejs"], files: paths.map((path) => ({ path, digest: hash("") })) }));
+  await Promise.all(skills.flatMap(({ id }) => paths.map(async (path) => { const file = join(root, "catalog", "skills", id, path); await mkdir(join(file, ".."), { recursive: true }); await writeFile(file, `${id}:${path}\n`); })));
+  const manifest = { schemaVersion: 2, catalogVersion: "2.0.0", skills };
+  await writeFile(join(root, "catalog", "catalog.json"), JSON.stringify(manifest));
+  await updateDigests(root);
+  const output = JSON.parse(await readFile(join(root, "catalog", "catalog.json"), "utf8")) as { skills: Array<{ id: string; files: Array<{ path: string }> }> };
+  assert.deepEqual({ ids: output.skills.map(({ id }) => id), paths: output.skills.map(({ files }) => files.map(({ path }) => path)) }, {
+    ids: ["aa", "ab"], paths: [["SKILL.md", "references/example.md"], ["SKILL.md", "references/example.md"]],
+  });
+  parseCatalog(output);
 });
 
 test("parser copies caller file records into immutable output", () => {
